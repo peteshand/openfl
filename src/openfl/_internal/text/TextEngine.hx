@@ -48,7 +48,7 @@ class TextEngine
 	public var backgroundColor:Int;
 	public var border:Bool;
 	public var borderColor:Int;
-	public var bottomScrollV(default, null):Int;
+	public var bottomScrollV(get, null):Int;
 	public var bounds:Rectangle;
 	public var caretIndex:Int;
 	public var embedFonts:Bool;
@@ -63,12 +63,12 @@ class TextEngine
 	public var lineWidths:Vector<Float>;
 	public var maxChars:Int;
 	public var maxScrollH(default, null):Int;
-	public var maxScrollV(default, null):Int;
+	public var maxScrollV(get, null):Int;
 	public var multiline:Bool;
 	public var numLines(default, null):Int;
 	public var restrict(default, set):UTF8String;
 	public var scrollH:Int;
-	public var scrollV:Int;
+	@:isVar public var scrollV(get, set):Int;
 	public var selectable:Bool;
 	public var sharpness:Float;
 	public var text(default, set):UTF8String;
@@ -122,6 +122,7 @@ class TextEngine
 		gridFitType = GridFitType.PIXEL;
 		maxChars = 0;
 		multiline = false;
+		numLines = 1;
 		sharpness = 0;
 		scrollH = 0;
 		scrollV = 1;
@@ -587,7 +588,6 @@ class TextEngine
 		textWidth = 0;
 		textHeight = 0;
 		numLines = 1;
-		bottomScrollV = 0;
 		maxScrollH = 0;
 
 		for (group in layoutGroups)
@@ -607,11 +607,6 @@ class TextEngine
 				currentLineWidth = 0;
 
 				numLines++;
-
-				if (textHeight <= height - 2)
-				{
-					bottomScrollV++;
-				}
 			}
 
 			currentLineAscent = Math.max(currentLineAscent, group.ascent);
@@ -690,16 +685,20 @@ class TextEngine
 
 		if (numLines == 1)
 		{
-			bottomScrollV = 1;
-
 			if (currentLineLeading > 0)
 			{
 				textHeight += currentLineLeading;
 			}
 		}
-		else if (textHeight <= height - 2)
+
+		if (layoutGroups.length > 0)
 		{
-			bottomScrollV++;
+			var group = layoutGroups[layoutGroups.length - 1];
+
+			if (group != null && group.startIndex == group.endIndex)
+			{
+				textHeight -= currentLineHeight;
+			}
 		}
 
 		if (autoSize != NONE)
@@ -728,9 +727,6 @@ class TextEngine
 			maxScrollH = 0;
 		}
 
-		maxScrollV = numLines - bottomScrollV + 1;
-
-		if (scrollV > maxScrollV) scrollV = maxScrollV;
 		if (scrollH > maxScrollH) scrollH = maxScrollH;
 	}
 
@@ -753,6 +749,7 @@ class TextEngine
 		var layoutGroup:TextLayoutGroup = null, positions = null;
 		var widthValue = 0.0, heightValue = 0, maxHeightValue = 0;
 		var previousSpaceIndex = -2; // -1 equals not found, -2 saves extra comparison in `breakIndex == previousSpaceIndex`
+		var previousBreakIndex = -1;
 		var spaceIndex = text.indexOf(" ");
 		var breakIndex = getLineBreakIndex();
 
@@ -942,9 +939,9 @@ class TextEngine
 			}
 
 			leading = currentFormat.leading;
-			
+
 			heightValue = Math.ceil(ascent + descent + leading);
-			
+
 			if (heightValue > maxHeightValue)
 			{
 				maxHeightValue = heightValue;
@@ -970,10 +967,10 @@ class TextEngine
 				#end
 
 				font = getFontInstance(currentFormat);
-				
+
 				return true;
 			}
-			
+
 			return false;
 		}
 
@@ -1008,7 +1005,8 @@ class TextEngine
 					{
 						if (!nextFormatRange())
 						{
-							Log.warn("You found a bug in OpenFL's text code! Please save a copy of your project and contact Joshua Granick (@singmajesty) so we can fix this.");
+							Log
+								.warn("You found a bug in OpenFL's text code! Please save a copy of your project and contact Joshua Granick (@singmajesty) so we can fix this.");
 							break;
 						}
 
@@ -1096,7 +1094,8 @@ class TextEngine
 
 					if (!nextFormatRange())
 					{
-						Log.warn("You found a bug in OpenFL's text code! Please save a copy of your project and contact Joshua Granick (@singmajesty) so we can fix this.");
+						Log
+							.warn("You found a bug in OpenFL's text code! Please save a copy of your project and contact Joshua Granick (@singmajesty) so we can fix this.");
 						break;
 					}
 
@@ -1169,7 +1168,12 @@ class TextEngine
 					}
 				}
 
-				if (i < 2 && positionWidth + offsetX > width - 2)
+				if (positionWidth == 0.0)
+				{
+					// if there's so much offsetX that text can't even be displayed to begin with, don't worry about wrapping
+					break;
+				}
+				else if (i < 2 && positionWidth + offsetX > width - 2)
 				{
 					// if there's no room to put even a single character, automatically wrap the next character
 
@@ -1270,15 +1274,10 @@ class TextEngine
 					lineFormat = formatRange.format;
 				}
 
-				if (breakIndex >= text.length - 1)
-				{
-					// Trailing line breaks do not add to textHeight (offsetY), but they do add to numLines (lineIndex)
-					offsetY -= maxHeightValue;
-				}
-
 				alignBaseline();
 
 				textIndex = breakIndex + 1;
+				previousBreakIndex = breakIndex;
 				breakIndex = getLineBreakIndex(textIndex);
 			}
 			else if (spaceIndex > -1)
@@ -1524,6 +1523,22 @@ class TextEngine
 			}
 		}
 
+		// if final char is a line break, create an empty layoutGroup for it
+		if (previousBreakIndex == textIndex - 2 && previousBreakIndex > -1)
+		{
+			nextLayoutGroup(textIndex, textIndex);
+
+			layoutGroup.positions = [];
+			layoutGroup.ascent = ascent;
+			layoutGroup.descent = descent;
+			layoutGroup.leading = leading;
+			layoutGroup.lineIndex = lineIndex;
+			layoutGroup.offsetX = 2;
+			layoutGroup.offsetY = offsetY;
+			layoutGroup.width = 0;
+			layoutGroup.height = heightValue;
+		}
+
 		#if openfl_trace_text_layout_groups
 		for (lg in layoutGroups)
 		{
@@ -1705,6 +1720,70 @@ class TextEngine
 	}
 
 	// Get & Set Methods
+	private function get_bottomScrollV():Int
+	{
+		// TODO: only update when dirty
+		if (numLines == 1 || lineHeights == null)
+		{
+			return 1;
+		}
+		else
+		{
+			var tempHeight = 0.0;
+			var ret = lineHeights.length;
+
+			for (i in ret - 1...lineHeights.length)
+			{
+				if (tempHeight + lineHeights[i] <= height - 4)
+				{
+					tempHeight += lineHeights[i];
+				}
+				else
+				{
+					ret = i;
+					break;
+				}
+			}
+			
+			if (ret < 1) return 1;
+			return ret;
+		}
+	}
+	
+	private function get_maxScrollV():Int
+	{
+		// TODO: only update when dirty
+		if (numLines == 1 || lineHeights == null)
+		{
+			return 1;
+		}
+		else
+		{
+			var i = numLines - 1, tempHeight = 0.0;
+
+			if (text.charCodeAt(text.length - 1) == '\n'.code) i--; // trailing newlines do not contribute to maxScrollV
+			var j = i;
+
+			while (i >= 0)
+			{
+				if (tempHeight + lineHeights[i] <= height - 4)
+				{
+					tempHeight += lineHeights[i];
+					i--;
+				}
+				else
+					break;
+			}
+
+			if (i == j) i = numLines; // maxScrollV defaults to numLines if the height - 4 is less than the line's height
+			// TODO: check if it's based on the first or last line's height
+			else i += 2;
+			
+			if (i < 1) return 1;
+			return i;
+		}
+	}
+	
 	private function set_restrict(value:String):String
 	{
 		if (restrict == value)
@@ -1724,6 +1803,21 @@ class TextEngine
 		}
 
 		return restrict;
+	}
+
+	private function get_scrollV():Int
+	{
+		if (numLines == 1 || lineHeights == null) return 1;
+		
+		var max = maxScrollV;
+		if (scrollV > max) return max;
+		return scrollV;
+	}
+
+	private function set_scrollV(value:Int):Int
+	{
+		if (value < 1) value = 1;
+		return scrollV = value;
 	}
 
 	private function set_text(value:String):String

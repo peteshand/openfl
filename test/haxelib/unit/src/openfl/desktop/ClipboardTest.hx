@@ -46,7 +46,7 @@ class ClipboardTest
 	#if (flash && !air)
 	@Ignore
 	#end
-	@AsyncTest public function getData()
+	@Test public function getData()
 	{
 		var textFormatData = 'Text Format Data';
 		var clipboard = Clipboard.generalClipboard;
@@ -106,10 +106,12 @@ class ClipboardTest
 	{
 		// TODO: Confirm functionality
 
+		#if !openfl_strict
 		var clipboard = Clipboard.generalClipboard;
 		var exists = clipboard.setDataHandler;
 
 		Assert.isNotNull(exists);
+		#end
 	}
 
 	// Properties
